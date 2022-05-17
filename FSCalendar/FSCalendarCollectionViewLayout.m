@@ -439,7 +439,11 @@
             frame;
         });
         attributes.frame = frame;
-        self.itemAttributes[indexPath] = attributes;
+        if (indexPath != NULL) {
+            self.itemAttributes[indexPath] = attributes;
+        } else {
+            printf("NULL");
+        }
     }
     return attributes;
 }

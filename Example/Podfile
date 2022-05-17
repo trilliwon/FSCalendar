@@ -1,0 +1,13 @@
+use_frameworks!
+
+platform :ios, '8.0'
+
+target 'FSCalendar_Example' do
+  pod 'FSCalendar', :path => '../'
+
+  target 'FSCalendar_Tests' do
+    inherit! :search_paths
+
+    
+  end
+end

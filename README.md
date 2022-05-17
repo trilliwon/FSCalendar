@@ -74,7 +74,7 @@ end
 
 ```ruby
 target '<Your Target Name>' do
-	pod 'FSCalendar'
+    pod 'FSCalendar'
 end
 ```
 

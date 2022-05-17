@@ -1,0 +1,16 @@
+PODS:
+  - FSCalendar (0.1.0)
+
+DEPENDENCIES:
+  - FSCalendar (from `../`)
+
+EXTERNAL SOURCES:
+  FSCalendar:
+    :path: "../"
+
+SPEC CHECKSUMS:
+  FSCalendar: b7a1fba397aa3773256fa956af135f8f057f29e6
+
+PODFILE CHECKSUM: d9a60d614a2bd43b3675f4924aee36443542007e
+
+COCOAPODS: 1.7.3

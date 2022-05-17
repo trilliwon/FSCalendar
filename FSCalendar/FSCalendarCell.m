@@ -212,14 +212,14 @@
     
     UIColor *borderColor = self.colorForCellBorder;
     UIColor *fillColor = self.colorForCellFill;
-    
+
     BOOL shouldHideShapeLayer = !self.selected && !self.dateIsToday && !borderColor && !fillColor;
-    
+
     if (_shapeLayer.opacity == shouldHideShapeLayer) {
         _shapeLayer.opacity = !shouldHideShapeLayer;
     }
     if (!shouldHideShapeLayer) {
-        
+
         CGColorRef cellFillColor = self.colorForCellFill.CGColor;
         if (!CGColorEqualToColor(_shapeLayer.fillColor, cellFillColor)) {
             _shapeLayer.fillColor = cellFillColor;
@@ -387,7 +387,7 @@ OFFSET_PROPERTY(preferredEventOffset, PreferredEventOffset, _appearance.eventOff
         self.contentView = view;
         
         self.eventLayers = [NSPointerArray weakObjectsPointerArray];
-        for (int i = 0; i < FSCalendarMaximumNumberOfEvents; i++) {
+        for (int i = 0; i < 3; i++) {
             CALayer *layer = [CALayer layer];
             layer.backgroundColor = [UIColor clearColor].CGColor;
             [self.contentView.layer addSublayer:layer];
@@ -450,7 +450,7 @@ OFFSET_PROPERTY(preferredEventOffset, PreferredEventOffset, _appearance.eventOff
 - (void)setNumberOfEvents:(NSInteger)numberOfEvents
 {
     if (_numberOfEvents != numberOfEvents) {
-        _numberOfEvents = MIN(MAX(numberOfEvents,0),FSCalendarMaximumNumberOfEvents);
+        _numberOfEvents = MIN(MAX(numberOfEvents,0),3);
         [self setNeedsLayout];
     }
 }

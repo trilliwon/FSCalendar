@@ -130,15 +130,21 @@
 - (void)scopeTransitionDidUpdate:(UIPanGestureRecognizer *)panGesture
 {
     if (self.state != FSCalendarTransitionStateChanging) return;
-    
-    CGFloat translation = ABS([panGesture translationInView:panGesture.view].y);
-    CGFloat progress = ({
-        CGFloat maxTranslation = ABS(CGRectGetHeight(self.transitionAttributes.targetBounds) - CGRectGetHeight(self.transitionAttributes.sourceBounds));
-        translation = MIN(maxTranslation, translation);
-        translation = MAX(0, translation);
-        CGFloat progress = translation/maxTranslation;
-        progress;
-    });
+
+    CGFloat translation = [panGesture translationInView:panGesture.view].y;
+    CGFloat maxTranslation = ABS(CGRectGetHeight(self.transitionAttributes.targetBounds) - CGRectGetHeight(self.transitionAttributes.sourceBounds));
+    CGFloat progress = 0;
+
+    if (self.transitionAttributes.targetBounds.size.height > self.transitionAttributes.sourceBounds.size.height) {
+        // 열릴 때
+        translation = MAX(0, MIN(maxTranslation, translation));
+        progress = translation/maxTranslation;
+    } else {
+        // 닫힐 때
+        translation = MAX(0, MIN(maxTranslation, -translation));
+        progress = translation/maxTranslation;
+    }
+
     [self performAlphaAnimationWithProgress:progress];
     [self performPathAnimationWithProgress:progress];
 }
@@ -162,10 +168,33 @@
     if (velocity * translation < 0) {
         [self.transitionAttributes revert];
     }
-    [self performTransition:self.transitionAttributes.targetScope fromProgress:progress toProgress:1.0 animated:YES];
+    [self performTransition:self.transitionAttributes.targetScope fromProgress:progress toProgress:1.0 yVelocity:velocity animated:YES];
 }
 
 #pragma mark - Public methods
+
+- (void)performInitialTransition
+{
+    // initial
+    if (self.state != FSCalendarTransitionStateIdle) return;
+
+    self.state = FSCalendarTransitionStateChanging;
+    self.transitionAttributes = [self createTransitionAttributesTargetingScope:FSCalendarScopeMonth];
+    [self prepareWeekToMonthTransition];
+
+    // progress
+    [UIView animateWithDuration:0.3 delay:0  options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        [self performAlphaAnimationWithProgress:1];
+        [self performPathAnimationWithProgress:1];
+    } completion:^(BOOL finished){
+        // end
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            self.state = FSCalendarTransitionStateFinishing;
+            [self.transitionAttributes revert];
+            [self performTransition:self.transitionAttributes.targetScope fromProgress:0.0 toProgress:1.0 animated:YES];
+        });
+    }];
+}
 
 - (void)performScopeTransitionFromScope:(FSCalendarScope)fromScope toScope:(FSCalendarScope)toScope animated:(BOOL)animated
 {
@@ -256,7 +285,11 @@
             if (targetScope == FSCalendarScopeWeek) {
                 [dates addObject:self.calendar.currentPage];
             } else {
-                [dates addObject:[self.calendar.gregorian dateByAddingUnit:NSCalendarUnitDay value:3 toDate:self.calendar.currentPage options:0]];
+                // 중요!!
+                // 현재 Toss 에서는 월단위 캘린더를 사용하고 있기 때문에 currentPage 값을 보정해준다
+                // 따라서 여기서 3을 더할 필요 없고, currentPage 를 그대로 가져다 쓰면 된다
+                [dates addObject:self.calendar.currentPage];
+//                [dates addObject:[self.calendar.gregorian dateByAddingUnit:NSCalendarUnitDay value:3 toDate:self.calendar.currentPage options:0]];
             }
             dates.copy;
         });
@@ -274,7 +307,13 @@
         coordinate.row;
     });
     attributes.targetPage = ({
-        NSDate *targetPage = targetScope == FSCalendarScopeMonth ? [self.calendar.gregorian fs_firstDayOfMonth:attributes.focusedDate] : [self.calendar.gregorian fs_middleDayOfWeek:attributes.focusedDate];
+        // 중요!!
+        // 현재 Toss 에서는 월단위 캘린더를 사용하고 있기 때문에 첫번째 주일때, dayOfWeek 를 사용하면 문제가 된다.
+        // 따라서 이부분은 보정해주도록 하자
+        NSDate *tempPage = targetScope == FSCalendarScopeMonth ? [self.calendar.gregorian fs_firstDayOfMonth:attributes.focusedDate] : [self.calendar.gregorian fs_middleDayOfWeek:attributes.focusedDate];
+
+        NSDate *targetPage = [self.calendar.calculator safeDateForDate:tempPage];
+
         targetPage;
     });
     attributes.targetBounds = [self boundingRectForScope:attributes.targetScope page:attributes.targetPage];
@@ -319,6 +358,38 @@
     self.calendar.contentView.fs_height = CGRectGetHeight(targetBounds);
     self.calendar.daysContainer.fs_height = CGRectGetHeight(targetBounds)-self.calendar.preferredHeaderHeight-self.calendar.preferredWeekdayHeight;
     [[self.calendar valueForKey:@"delegateProxy"] calendar:self.calendar boundingRectWillChange:targetBounds animated:animated];
+}
+
+- (void)performTransition:(FSCalendarScope)targetScope fromProgress:(CGFloat)fromProgress toProgress:(CGFloat)toProgress yVelocity:(CGFloat)yVelocity animated:(BOOL)animated
+{
+    FSCalendarTransitionAttributes *attr = self.transitionAttributes;
+
+    [self.calendar willChangeValueForKey:@"scope"];
+    [self.calendar fs_setUnsignedIntegerVariable:targetScope forKey:@"_scope"];
+    if (targetScope == FSCalendarScopeWeek) {
+        [self.calendar fs_setVariable:attr.targetPage forKey:@"_currentPage"];
+    }
+    [self.calendar didChangeValueForKey:@"scope"];
+
+    CGFloat currentHeight = self.calendar.fs_height;
+    CGFloat finalHeight = attr.targetBounds.size.height;
+    CGFloat distance = finalHeight - currentHeight;
+
+    if (animated && distance != 0) {
+        CGFloat springVelocity = fabs(yVelocity / distance);
+        if (self.calendar.delegate && ([self.calendar.delegate respondsToSelector:@selector(calendar:boundingRectWillChange:animated:)])) {
+            [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:springVelocity options:UIViewAnimationOptionCurveEaseInOut animations:^{
+                [self performAlphaAnimationWithProgress:toProgress];
+                self.collectionView.fs_top = [self calculateOffsetForProgress:toProgress];
+                [self boundingRectWillChange:attr.targetBounds animated:YES];
+            } completion:^(BOOL finished) {
+                [self performTransitionCompletionAnimated:YES];
+            }];
+        }
+    } else {
+        [self performTransitionCompletionAnimated:animated];
+        [self boundingRectWillChange:attr.targetBounds animated:animated];
+    }
 }
 
 - (void)performTransition:(FSCalendarScope)targetScope fromProgress:(CGFloat)fromProgress toProgress:(CGFloat)toProgress animated:(BOOL)animated

@@ -29,11 +29,13 @@ static inline void FSCalendarAssertDateInBounds(NSDate *date, NSCalendar *calend
         NSInteger maxOffset = [calendar components:NSCalendarUnitDay fromDate:maximumDate toDate:date options:0].day;
         valid &= maxOffset <= 0;
     }
+    #if DEBUG
     if (!valid) {
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
         formatter.dateFormat = @"yyyy/MM/dd";
         [NSException raise:@"FSCalendar date out of bounds exception" format:@"Target date %@ beyond bounds [%@ - %@]", [formatter stringFromDate:date], [formatter stringFromDate:minimumDate], [formatter stringFromDate:maximumDate]];
     }
+    #endif
 }
 
 NS_ASSUME_NONNULL_END
@@ -91,7 +93,6 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
 - (void)scrollToPageForDate:(NSDate *)date animated:(BOOL)animated;
 
 - (BOOL)isPageInRange:(NSDate *)page;
-- (BOOL)isDateInRange:(NSDate *)date;
 - (BOOL)isDateSelected:(NSDate *)date;
 - (BOOL)isDateInDifferentPage:(NSDate *)date;
 
@@ -152,12 +153,12 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
     _gregorian = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
     _formatter = [[NSDateFormatter alloc] init];
     _formatter.dateFormat = @"yyyy-MM-dd";
-    _locale = [NSLocale currentLocale];
-    _timeZone = [NSTimeZone defaultTimeZone];
+    _locale = [[NSLocale alloc] initWithLocaleIdentifier:@"ko_KR"];
+    _timeZone = [NSTimeZone timeZoneWithAbbreviation:@"KST"];
     _firstWeekday = 1;
     [self invalidateDateTools];
     
-    _today = [self.gregorian startOfDayForDate:[NSDate date]];
+    _today = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:[NSDate date] options:0];
     _currentPage = [self.gregorian fs_firstDayOfMonth:_today];
     
     
@@ -612,13 +613,23 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
             break;
         }
         case FSCalendarScopeWeek: {
+            // 중요!!
+            // 현재 Toss 에서는 월단위 캘린더를 사용하고 있기 때문에 첫번째 주일때, dayOfWeek 를 사용하면 문제가 된다.
+            // 따라서 이부분은 보정해주도록 하자
             NSDate *minimumPage = [self.gregorian fs_firstDayOfWeek:_minimumDate];
-            targetPage = [self.gregorian dateByAddingUnit:NSCalendarUnitWeekOfYear value:sections toDate:minimumPage options:0];
+            NSDate *tempPage = [self.gregorian dateByAddingUnit:NSCalendarUnitWeekOfYear value:sections toDate:minimumPage options:0];
+            targetPage = [self.calculator safeDateForDate:tempPage];
             break;
         }
     }
     BOOL shouldTriggerPageChange = [self isDateInDifferentPage:targetPage];
     if (shouldTriggerPageChange) {
+        if (_currentPage < targetPage) { // 왼쪽으로 스와이프
+            [self.delegateProxy calendarLeftSwipeDetected:self];
+        } else { // 오른쪽으로 스와이프
+            [self.delegateProxy calendarRightSwipeDetected:self];
+        }
+
         NSDate *lastPage = _currentPage;
         [self willChangeValueForKey:@"currentPage"];
         _currentPage = targetPage;
@@ -701,7 +712,7 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
         _today = nil;
     } else {
         FSCalendarAssertDateInBounds(today,self.gregorian,self.minimumDate,self.maximumDate);
-        _today = [self.gregorian startOfDayForDate:today];
+        _today = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:today options:0];
     }
     if (self.hasValidateVisibleLayout) {
         [self.visibleCells makeObjectsPerformSelector:@selector(setDateIsToday:) withObject:nil];
@@ -719,7 +730,7 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
 {
     [self requestBoundingDatesIfNecessary];
     if (self.floatingMode || [self isDateInDifferentPage:currentPage]) {
-        currentPage = [self.gregorian startOfDayForDate:currentPage];
+        currentPage = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:currentPage options:0];
         if ([self isPageInRange:currentPage]) {
             [self scrollToPageForDate:currentPage animated:animated];
         }
@@ -999,6 +1010,23 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
     [self.collectionView reloadData];
 }
 
+
+- (void)reloadNewMonth:(NSDate *)date
+{
+    _needsRequestingBoundingDates = YES;
+    if ([self requestBoundingDatesIfNecessary] || !self.collectionView.indexPathsForVisibleItems.count) {
+        [self invalidateHeaders];
+    }
+
+    [self willChangeValueForKey:@"currentPage"];
+    _currentPage = date;
+    [self.delegateProxy calendarCurrentPageDidChange:self];
+    [self didChangeValueForKey:@"currentPage"];
+
+    [self adjustBoundingRectIfNecessary];
+    [self.collectionView reloadData];
+}
+
 - (void)setScope:(FSCalendarScope)scope animated:(BOOL)animated
 {
     if (self.floatingMode) return;
@@ -1027,7 +1055,9 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
 
 - (void)selectDate:(NSDate *)date
 {
-    [self selectDate:date scrollToDate:YES];
+    if (date && [self isDateInRange:date]) {
+        [self selectDate:date scrollToDate:YES];
+    }
 }
 
 - (void)selectDate:(NSDate *)date scrollToDate:(BOOL)scrollToDate
@@ -1037,7 +1067,7 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
 
 - (void)deselectDate:(NSDate *)date
 {
-    date = [self.gregorian startOfDayForDate:date];
+    date = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:date options:0];
     if (![_selectedDates containsObject:date]) {
         return;
     }
@@ -1060,7 +1090,7 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
     
     FSCalendarAssertDateInBounds(date,self.gregorian,self.minimumDate,self.maximumDate);
     
-    NSDate *targetDate = [self.gregorian startOfDayForDate:date];
+    NSDate *targetDate = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:date options:0];
     NSIndexPath *targetIndexPath = [self.calculator indexPathForDate:targetDate];
     
     BOOL shouldSelect = YES;
@@ -1184,7 +1214,11 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
                     break;
                 }
                 case FSCalendarScopeWeek: {
-                    _currentPage = [self.gregorian fs_firstDayOfWeek:date];
+                    // 중요!!
+                    // 현재 Toss 에서는 월단위 캘린더를 사용하고 있기 때문에 첫번째 주일때, dayOfWeek 를 사용하면 문제가 된다.
+                    // 따라서 이부분은 보정해주도록 하자
+                    NSDate *tempPage = [self.gregorian fs_firstDayOfWeek:date];
+                    _currentPage = [self.calculator safeDateForDate:tempPage];
                     break;
                 }
             }
@@ -1202,9 +1236,25 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
     }
 }
 
+- (void)performInitialAnimation
+{
+    [self.transitionCoordinator performInitialTransition];
+}
+
+- (BOOL)isTransitionFinished
+{
+    return self.transitionCoordinator.state != FSCalendarTransitionStateChanging;
+}
+
+- (NSInteger)numberOfRowsInMonth:(NSDate *)month
+{
+    return [self.calculator numberOfRowsInMonth:month];
+}
 
 - (BOOL)isDateInRange:(NSDate *)date
 {
+    [self requestBoundingDatesIfNecessary];
+
     BOOL flag = YES;
     flag &= [self.gregorian components:NSCalendarUnitDay fromDate:date toDate:self.minimumDate options:0].day <= 0;
     flag &= [self.gregorian components:NSCalendarUnitDay fromDate:date toDate:self.maximumDate options:0].day >= 0;;
@@ -1534,9 +1584,9 @@ typedef NS_ENUM(NSUInteger, FSCalendarOrientation) {
         _needsRequestingBoundingDates = NO;
         self.formatter.dateFormat = @"yyyy-MM-dd";
         NSDate *newMin = [self.dataSourceProxy minimumDateForCalendar:self]?:[self.formatter dateFromString:@"1970-01-01"];
-        newMin = [self.gregorian startOfDayForDate:newMin];
+        newMin = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:newMin options:0];
         NSDate *newMax = [self.dataSourceProxy maximumDateForCalendar:self]?:[self.formatter dateFromString:@"2099-12-31"];
-        newMax = [self.gregorian startOfDayForDate:newMax];
+        newMax = [self.gregorian dateBySettingHour:0 minute:0 second:0 ofDate:newMax options:0];
         
         NSAssert([self.gregorian compareDate:newMin toDate:newMax toUnitGranularity:NSCalendarUnitDay] != NSOrderedDescending, @"The minimum date of calendar should be earlier than the maximum.");
         

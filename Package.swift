@@ -3,19 +3,20 @@ import PackageDescription
 
 let package = Package(
     name: "FSCalendar",
-    platforms: [.iOS(.v9)],
     products: [
         .library(
             name: "FSCalendar",
             targets: ["FSCalendar"]
-        ),
+        )
     ],
     targets: [
         .target(
             name: "FSCalendar",
-            dependencies: [],
             path: "FSCalendar/",
-            exclude: ["Info.plist"]
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .unsafeFlags(["-fprofile-instr-generate"])
+            ]
         )
     ]
 )
